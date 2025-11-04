@@ -1,0 +1,202 @@
+package reader;
+
+import javax.swing.*;
+import java.awt.*;
+import java.awt.event.ComponentAdapter;
+import java.awt.event.ComponentEvent;
+import java.awt.event.KeyAdapter;
+import java.awt.event.KeyEvent;
+import java.io.File;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.Locale;
+import java.util.concurrent.TimeUnit;
+
+import static java.lang.System.exit;
+
+public class reader {
+    private static int currentImage = 0;
+    private static File[] files;
+    private static final Locale locale = Locale.getDefault();
+    private static File workingFolder;
+    private static boolean deleteDialogShown = false;
+
+
+    private static JFrame frame;
+    private static JLabel imageLabel;
+    private static JScrollPane scrollPane;
+
+    public static void main(String[] args) {
+        programStart();
+    }
+
+    public static void programStart() {
+        SwingUtilities.invokeLater(() -> {
+            try {
+                JFileChooser fileChooser = new JFileChooser();
+                if (workingFolder != null) {
+                    fileChooser.setCurrentDirectory(new File(String.valueOf(workingFolder)));
+                    System.out.println(workingFolder);
+                }
+                fileChooser.setFileSelectionMode(JFileChooser.DIRECTORIES_ONLY);
+                int result = fileChooser.showOpenDialog(null);
+                if (result == JFileChooser.APPROVE_OPTION) {
+                    File folder = fileChooser.getSelectedFile();
+                    workingFolder = fileChooser.getCurrentDirectory();
+                    files = folder.listFiles((dir, name) ->
+                            name.toLowerCase().endsWith(".png") || name.toLowerCase().endsWith(".jpg"));
+                    if (files != null && files.length > 0) {
+                        java.util.Arrays.sort(files);
+                        initializeUI();
+                        updateImage();
+                    }
+                }
+            } catch (Exception e) {
+                System.out.println("Error initializing: " + e.getMessage());
+            }
+        });
+    }
+
+    private static void initializeUI() {
+        frame = new JFrame();
+        String title = locale.getLanguage().equals("de")
+                ? "Leertaste und Strg um zum nächsten oder vorherigen Bild zu wechseln, Esc zum beenden, Rücktaste um zur Ordnerauswahl zu kommen"
+                : "Space and Ctrl to switch images, Esc to close reader backspace to get to folder selection";
+        frame.setTitle(title);
+        frame.setSize((int) Toolkit.getDefaultToolkit().getScreenSize().getWidth() / 2,
+                (int) Toolkit.getDefaultToolkit().getScreenSize().getHeight() - 50);
+        frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
+        frame.setLayout(new BorderLayout());
+
+        imageLabel = new JLabel();
+        imageLabel.setHorizontalAlignment(JLabel.CENTER);
+        imageLabel.setOpaque(true);
+        imageLabel.setBackground(Color.BLACK);
+
+        scrollPane = new JScrollPane(imageLabel);
+        scrollPane.getViewport().setBackground(Color.BLACK);
+        scrollPane.setOpaque(true);
+        frame.add(scrollPane, BorderLayout.CENTER);
+
+        scrollPane.addMouseWheelListener(m -> {
+            JScrollBar verticalScrollBar = scrollPane.getVerticalScrollBar();
+            verticalScrollBar.setValue(verticalScrollBar.getValue() + m.getWheelRotation() * 50);
+        });
+
+        frame.addComponentListener(new ComponentAdapter() {
+            @Override
+            public void componentResized(ComponentEvent e) {
+                updateImage(); // Re-scale the image to fit the new window size
+            }
+        });
+
+
+        frame.addKeyListener(new KeyAdapter() {
+            public void keyReleased(KeyEvent e) {
+
+                switch (e.getKeyCode()) {
+                    case KeyEvent.VK_SPACE:
+                        if (currentImage < files.length) {
+                            currentImage++;
+                            scrollPane.getVerticalScrollBar().setValue(0);
+                            updateImage();
+                        } else if (!deleteDialogShown) {
+                            deleteDialogShown = true;
+                            deleteFolder(files[0].getParentFile());
+                        }
+                        break;
+                    case KeyEvent.VK_CONTROL:
+                        if (currentImage > 0) {
+                            currentImage--;
+                            updateImage();
+                        }
+                        break;
+                    case KeyEvent.VK_ESCAPE:
+                        exit(0);
+                    case KeyEvent.VK_BACK_SPACE:
+                        restartProgram();
+                }
+            }
+        });
+        frame.setVisible(true);
+    }
+
+    private static void updateImage() {
+        if (currentImage >= 0 && currentImage < files.length) {
+            ImageIcon originalIcon = new ImageIcon(files[currentImage].getAbsolutePath());
+            Image originalImage = originalIcon.getImage();
+
+            int originalWidth = originalIcon.getIconWidth();
+            int originalHeight = originalIcon.getIconHeight();
+
+            int maxWidth = frame.getWidth() - 20;
+            int maxHeight = frame.getHeight();
+
+            double widthRatio = (double) maxWidth / originalWidth;
+            double heightRatio = (double) maxHeight / originalHeight;
+            double scaleFactor = Math.max(widthRatio, heightRatio);
+
+            int scaledWidth = (int) (originalWidth * scaleFactor);
+            int scaledHeight = (int) (originalHeight * scaleFactor);
+
+            Image scaledImage = originalImage.getScaledInstance(scaledWidth, scaledHeight, Image.SCALE_SMOOTH);
+            imageLabel.setIcon(new ImageIcon(scaledImage));
+        }
+    }
+
+    private static void deleteFolder(File folder) {
+        String message = locale.getLanguage().equals("de")
+                ? "Anwendung wird den Ordner und alle Bilder, die gerade gelesen wurden löschen. Wollen Sie fortfahren"
+                : "Application will delete the folder and all images you just read. Do you want to continue?";
+        String warning = locale.getLanguage().equals("de") ? "Warnung" : "Warning";
+
+        try {
+            TimeUnit.MILLISECONDS.sleep(1000);
+        } catch (InterruptedException e) {
+            throw new RuntimeException(e);
+        }
+
+        JOptionPane optionPane = new JOptionPane(
+                message,
+                JOptionPane.WARNING_MESSAGE,
+                JOptionPane.YES_NO_OPTION
+        );
+
+        JDialog dialog = optionPane.createDialog(null, warning);
+        dialog.setModal(false);
+        dialog.setFocusableWindowState(false);
+        dialog.setVisible(true);
+        // Listen for user response
+        optionPane.addPropertyChangeListener(e -> {
+            String prop = e.getPropertyName();
+
+            if ((e.getSource() == optionPane) && prop.equals(JOptionPane.VALUE_PROPERTY)) {
+                dialog.setVisible(false);
+                Object value = optionPane.getValue();
+
+                if (value instanceof Integer && (int) value == JOptionPane.YES_OPTION) {
+                    try {
+                        if (folder.toString().toLowerCase().contains("chapter")) {
+                            Files.walk(folder.toPath())
+                                    .map(Path::toFile)
+                                    .sorted((o1, o2) -> -o1.compareTo(o2)) // delete children first
+                                    .forEach(File::delete);
+                        }
+                    } catch (IOException ex) {
+                        System.out.println("Error deleting folder: " + ex.getMessage());
+                    }
+                }
+                restartProgram();
+            }
+        });
+    }
+
+    public static void restartProgram() {
+        frame.dispose();
+        deleteDialogShown = false;
+        currentImage = 0;
+        programStart();
+    }
+
+}
