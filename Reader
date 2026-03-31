@@ -6,21 +6,25 @@ import java.awt.event.ComponentAdapter;
 import java.awt.event.ComponentEvent;
 import java.awt.event.KeyAdapter;
 import java.awt.event.KeyEvent;
+import java.io.BufferedWriter;
 import java.io.File;
+import java.io.FileWriter;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Locale;
 import java.util.concurrent.TimeUnit;
 
-import static java.lang.System.exit;
+import static java.lang.System.*;
 
 public class reader {
     private static int currentImage = 0;
     private static File[] files;
     private static final Locale locale = Locale.getDefault();
     private static File workingFolder;
+    private static String lastFolder;
     private static boolean deleteDialogShown = false;
+    private static final String TEXTFILE_DIRECTORY = System.getProperty("user.home") + File.separator + "Dokumente"
 
 
     private static JFrame frame;
@@ -35,9 +39,9 @@ public class reader {
         SwingUtilities.invokeLater(() -> {
             try {
                 JFileChooser fileChooser = new JFileChooser();
+                fileChooser.setDialogTitle(lastFolder);
                 if (workingFolder != null) {
                     fileChooser.setCurrentDirectory(new File(String.valueOf(workingFolder)));
-                    System.out.println(workingFolder);
                 }
                 fileChooser.setFileSelectionMode(JFileChooser.DIRECTORIES_ONLY);
                 int result = fileChooser.showOpenDialog(null);
@@ -46,10 +50,17 @@ public class reader {
                     workingFolder = fileChooser.getCurrentDirectory();
                     files = folder.listFiles((dir, name) ->
                             name.toLowerCase().endsWith(".png") || name.toLowerCase().endsWith(".jpg"));
+                    lastFolder = files[0].toString();
                     if (files != null && files.length > 0) {
                         java.util.Arrays.sort(files);
                         initializeUI();
                         updateImage();
+                    } else {
+                        String message = locale.getLanguage().equals("de")
+                                ? "Warnung: Konnte keine bilder in '" + workingFolder + "' finden"
+                                : "Warning: Could not find images in '" + workingFolder + "'";
+                        JOptionPane.showMessageDialog(frame, message);
+                        restartProgram();
                     }
                 }
             } catch (Exception e) {
@@ -109,6 +120,7 @@ public class reader {
                     case KeyEvent.VK_CONTROL:
                         if (currentImage > 0) {
                             currentImage--;
+                            scrollPane.getVerticalScrollBar().setValue(scrollPane.getVerticalScrollBar().getMaximum());
                             updateImage();
                         }
                         break;
@@ -130,22 +142,22 @@ public class reader {
             int originalWidth = originalIcon.getIconWidth();
             int originalHeight = originalIcon.getIconHeight();
 
-            int maxWidth = frame.getWidth() - 20;
-            int maxHeight = frame.getHeight();
+            float maxWidth = frame.getWidth()-20;
 
-            double widthRatio = (double) maxWidth / originalWidth;
-            double heightRatio = (double) maxHeight / originalHeight;
-            double scaleFactor = Math.max(widthRatio, heightRatio);
+            float widthRatio = maxWidth / originalWidth;
 
-            int scaledWidth = (int) (originalWidth * scaleFactor);
-            int scaledHeight = (int) (originalHeight * scaleFactor);
-
+            int scaledWidth = (int) (maxWidth);
+            int scaledHeight = (int) (originalHeight * widthRatio);
+            System.out.println(scaledWidth + ", " + scaledHeight);
             Image scaledImage = originalImage.getScaledInstance(scaledWidth, scaledHeight, Image.SCALE_SMOOTH);
             imageLabel.setIcon(new ImageIcon(scaledImage));
         }
     }
 
     private static void deleteFolder(File folder) {
+
+        appendLastFolderToTextFile();
+
         String message = locale.getLanguage().equals("de")
                 ? "Anwendung wird den Ordner und alle Bilder, die gerade gelesen wurden löschen. Wollen Sie fortfahren"
                 : "Application will delete the folder and all images you just read. Do you want to continue?";
@@ -162,6 +174,7 @@ public class reader {
                 JOptionPane.WARNING_MESSAGE,
                 JOptionPane.YES_NO_OPTION
         );
+
 
         JDialog dialog = optionPane.createDialog(null, warning);
         dialog.setModal(false);
@@ -192,11 +205,41 @@ public class reader {
         });
     }
 
+    private static void appendLastFolderToTextFile() {
+        try {
+            File directory = new File(TEXTFILE_DIRECTORY);
+            if (!directory.exists()) {
+                directory.mkdirs();
+            }
+
+            File file = new File(directory, "list.txt");
+
+            // Skip if file does not exist
+            if (!file.exists()) {
+                System.out.println("Text file does not exist. Skipping write.");
+                return;
+            }
+
+            try (BufferedWriter writer = new BufferedWriter(new FileWriter(file, true))) {
+                writer.write(lastFolder + "\n");
+            }
+
+            System.out.println("Appended lastFolder to text file.");
+
+        } catch (IOException e) {
+            System.out.println("Error writing to text file: " + e.getMessage());
+        }
+    }
+
+
     public static void restartProgram() {
-        frame.dispose();
-        deleteDialogShown = false;
-        currentImage = 0;
-        programStart();
+        try {
+            frame.dispose();
+        } finally {
+            deleteDialogShown = false;
+            currentImage = 0;
+            programStart();
+        }
     }
 
 }
