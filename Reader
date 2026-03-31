@@ -24,7 +24,7 @@ public class reader {
     private static File workingFolder;
     private static String lastFolder;
     private static boolean deleteDialogShown = false;
-    private static final String TEXTFILE_DIRECTORY = System.getProperty("user.home") + File.separator + "Dokumente"
+    private static final String TEXTFILE_DIRECTORY = System.getProperty("user.home") + File.separator + "Dokumente";
 
 
     private static JFrame frame;
