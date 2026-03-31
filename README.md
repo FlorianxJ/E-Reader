@@ -1,10 +1,9 @@
 # E-Reader
-The now not so poorly programmed E-Reader with a few fixesa and tweaks.
 
-As this application is fairly usable now i will probably not release another version or update the current one.
+A lightweigt Ebook Reader to work with Mihon.
+Files have to be in a folder and in the form of a Image format like png.
+The order at which files are displayed is based on alpabetical order.
+Image Scaling is implemented.
 
-As always you are free to use any of the code or even the whole programm in a projeckt.
-
-Here a link to the old repo as most of the documentation is there, for now: https://github.com/FlorianxJ/Poorly-programmed-jpg-viewer/releases/tag/Reader
-
-I might add a wiki in the future.
+As with all my project only the source code is provided due to EU Law.
+Feel free to use this code in any manner so long as it is leagal in your country.
