@@ -2,19 +2,13 @@ package reader;
 
 import javax.swing.*;
 import java.awt.*;
-import java.awt.event.ComponentAdapter;
-import java.awt.event.ComponentEvent;
-import java.awt.event.KeyAdapter;
-import java.awt.event.KeyEvent;
-import java.io.BufferedWriter;
+import java.awt.event.*;
 import java.io.File;
-import java.io.FileWriter;
 import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.util.Locale;
-import java.util.concurrent.TimeUnit;
-
+import java.nio.file.*;
+import java.util.List;
+import java.util.*;
+import java.util.regex.*;
 import static java.lang.System.*;
 
 public class reader {
@@ -23,85 +17,281 @@ public class reader {
     private static final Locale locale = Locale.getDefault();
     private static File workingFolder;
     private static String lastFolder;
-    private static boolean deleteDialogShown = false;
+    private static boolean endOfChapter = false;
 
-
+    private static String readChapters;
+    private static String listLocation;
 
     private static JFrame frame;
     private static JFrame controls;
     private static int readerWidth = (int) Toolkit.getDefaultToolkit().getScreenSize().getWidth() / 2;
-    private static int readerHeight = (int) Toolkit.getDefaultToolkit().getScreenSize().getHeight() -200;
+    private static int readerHeight = (int) Toolkit.getDefaultToolkit().getScreenSize().getHeight() - 200;
     private static JLabel imageLabel;
     private static JScrollPane scrollPane;
-
 
     public static void main(String[] args) {
         programStart();
     }
 
+    // --- Updated Entry Point with Side-by-Side List Preview ---
     public static void programStart() {
         SwingUtilities.invokeLater(() -> {
-            try {
-                JFileChooser fileChooser = new JFileChooser();
-                fileChooser.setDialogTitle(lastFolder);
-                if (workingFolder != null) {
-                    fileChooser.setCurrentDirectory(new File(String.valueOf(workingFolder)));
-                }
-                fileChooser.setFileSelectionMode(JFileChooser.DIRECTORIES_ONLY);
-                int result = fileChooser.showOpenDialog(null);
-                if (result == JFileChooser.APPROVE_OPTION) {
-                    File folder = fileChooser.getSelectedFile();
-                    workingFolder = fileChooser.getCurrentDirectory();
-                    System.out.println(lastFolder);
-                    files = folder.listFiles((dir, name) ->
-                            name.toLowerCase().endsWith(".png") || name.toLowerCase().endsWith(".jpg"));
-                    lastFolder = files[0].toString();
-                    if (files != null && files.length > 0) {
-                        java.util.Arrays.sort(files);
-                        initializeUI();
-                        initializeControls();
-                        updateImage();
-                    } else {
-                        String message = locale.getLanguage().equals("de")
-                                ? "Warnung: Konnte keine bilder in '" + workingFolder + "' finden"
-                                : "Warning: Could not find images in '" + workingFolder + "'";
-                        JOptionPane.showMessageDialog(frame, message);
-                        restartProgram();
+            // Create a custom frame for the selection interface
+            JFrame selectionFrame = new JFrame();
+            String selectTitle = locale.getLanguage().equals("de")
+                    ? "Ordnerauswahl & Verlauf"
+                    : "Folder Selection & History";
+            selectionFrame.setTitle(selectTitle);
+            selectionFrame.setSize(800, 500);
+            selectionFrame.setLocationRelativeTo(null); // Center on screen
+            selectionFrame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
+
+            // Left side: The folder chooser
+            JFileChooser fileChooser = new JFileChooser();
+            fileChooser.setControlButtonsAreShown(true); // Keep standard Open/Cancel buttons
+            if (workingFolder != null) {
+                fileChooser.setCurrentDirectory(workingFolder);
+            }
+            fileChooser.setFileSelectionMode(JFileChooser.DIRECTORIES_ONLY);
+
+            // Right side: The text area to preview list.txt
+            JTextArea historyArea = new JTextArea();
+            historyArea.setEditable(false);
+            historyArea.setFont(new Font("Monospaced", Font.PLAIN, 12));
+            historyArea.setMargin(new Insets(10, 10, 10, 10));
+
+            JScrollPane historyScrollPane = new JScrollPane(historyArea);
+            historyScrollPane.setBorder(BorderFactory.createTitledBorder(
+                    locale.getLanguage().equals("de") ? "Gelesene Kapitel (list.txt)" : "Read Chapters (list.txt)"
+            ));
+
+            // Split Pane to combine them cleanly side-by-side
+            JSplitPane splitPane = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, fileChooser, historyScrollPane);
+            splitPane.setDividerLocation(500);
+            splitPane.setResizeWeight(0.7);
+            selectionFrame.add(splitPane, BorderLayout.CENTER);
+
+            // Listener to update the text area whenever the user navigates or clicks a folder
+            java.beans.PropertyChangeListener dirListener = evt -> {
+                if (JFileChooser.DIRECTORY_CHANGED_PROPERTY.equals(evt.getPropertyName()) ||
+                        JFileChooser.SELECTED_FILE_CHANGED_PROPERTY.equals(evt.getPropertyName())) {
+
+                    File currentDir = fileChooser.getSelectedFile();
+                    // Fallback to current directory viewport if no single folder is explicitly highlighted yet
+                    if (currentDir == null) {
+                        currentDir = fileChooser.getCurrentDirectory();
+                    }
+
+                    if (currentDir != null && currentDir.exists() && currentDir.isDirectory()) {
+                        File listFile = new File(currentDir, "list.txt");
+                        if (listFile.exists()) {
+                            try {
+                                List<String> lines = Files.readAllLines(listFile.toPath());
+                                StringBuilder content = new StringBuilder();
+                                for (String line : lines) {
+                                    content.append(" • ").append(line).append("\n");
+                                }
+                                historyArea.setText(content.toString());
+                                // Auto-scroll to the bottom so they see the most recent chapters
+                                historyArea.setCaretPosition(historyArea.getDocument().getLength());
+                            } catch (IOException e) {
+                                historyArea.setText("Error reading list.txt");
+                            }
+                        }
                     }
                 }
-            } catch (Exception e) {
-                System.out.println("Error initializing: " + e.getMessage());
-            }
+            };
+
+            fileChooser.addPropertyChangeListener(dirListener);
+
+            // Handle Action listeners for the Open/Cancel buttons inside the embedded chooser
+            fileChooser.addActionListener(e -> {
+                if (e.getActionCommand().equals(JFileChooser.APPROVE_SELECTION)) {
+                    File folder = fileChooser.getSelectedFile();
+                    if (folder != null) {
+                        workingFolder = fileChooser.getCurrentDirectory();
+                        selectionFrame.dispose(); // Close selection frame
+                        openFolderDirectly(folder, 0); // Start reading
+                    }
+                } else if (e.getActionCommand().equals(JFileChooser.CANCEL_SELECTION)) {
+                    exit(0);
+                }
+            });
+
+            // Trigger the initial check manually for the starting directory context
+            dirListener.propertyChange(new java.beans.PropertyChangeEvent(fileChooser, JFileChooser.DIRECTORY_CHANGED_PROPERTY, null, fileChooser.getCurrentDirectory()));
+
+            selectionFrame.setVisible(true);
         });
     }
 
-    private static void initializeControls() {
+    // Overloaded helper method keeping original functionality
+    public static void openFolderDirectly(File folder) {
+        openFolderDirectly(folder, 0);
+    }
+
+    // Added startingImage parameter to support landing on the last image when navigating backwards
+    public static void openFolderDirectly(File folder, int startingImage) {
+        try {
+            if (folder == null || !folder.exists() || !folder.isDirectory()) {
+                out.println("Invalid target folder provided.");
+                restartProgram();
+                return;
+            }
+
+            workingFolder = folder.getParentFile();
+            out.println("Opening folder directly: " + folder.getAbsolutePath());
+
+            new Thread(() -> {
+                convertWebpToPng(folder);
+
+                SwingUtilities.invokeLater(() -> {
+                    files = folder.listFiles((dir, name) ->
+                            name.toLowerCase().endsWith(".png") || name.toLowerCase().endsWith(".jpg"));
+
+                    if (files != null && files.length > 0) {
+                        // CRITICAL FIX: Sort the files array FIRST before reading files.length
+                        Arrays.sort(files);
+
+                        // Now dynamically set starting position safely based on the sorted array length
+                        currentImage = Math.min(Math.max(0, startingImage), files.length - 1);
+                        endOfChapter = false;
+                        lastFolder = files[0].toString();
+
+                        initializeUI();
+                        initializeOnScreenControls();
+                        updateImage();
+
+                        // If starting at the end of a chapter, scroll to the bottom immediately
+                        if (currentImage > 0) {
+                            SwingUtilities.invokeLater(() ->
+                                    scrollPane.getVerticalScrollBar().setValue(scrollPane.getVerticalScrollBar().getMaximum())
+                            );
+                        }
+                    } else {
+                        String message = locale.getLanguage().equals("de")
+                                ? "Warnung: Konnte keine Bilder in '" + folder.getName() + "' finden"
+                                : "Warning: Could not find images in '" + folder.getName() + "'";
+                        JOptionPane.showMessageDialog(frame, message);
+                        restartProgram();
+                    }
+                });
+            }).start();
+
+        } catch (Exception e) {
+            out.println("Error loading folder directly: " + e.getMessage());
+        }
+    }
+
+    private static void convertWebpToPng(File folder) {
+        if (folder == null || !folder.exists() || !folder.isDirectory()) {
+            return;
+        }
+
+        File[] allFiles = folder.listFiles();
+        if (allFiles == null || allFiles.length == 0) {
+            return;
+        }
+
+        boolean needsConversion = allFiles[0].getName().toLowerCase().endsWith(".webp");
+
+        if (needsConversion) {
+            out.println("WebP directory detected. Setting up loading window...");
+
+            String loadingTitle = locale.getLanguage().equals("de") ? "Konvertiere WebP-Dateien..." : "Converting WebP files...";
+            String stepTitle = locale.getLanguage().equals("de") ? "Verarbeite Bild: " : "Processing image: ";
+
+            ProgressMonitor progressMonitor = new ProgressMonitor(
+                    frame,
+                    loadingTitle,
+                    "",
+                    0,
+                    allFiles.length
+            );
+
+            progressMonitor.setMillisToDecideToPopup(50);
+            progressMonitor.setMillisToPopup(100);
+
+            int processedCount = 0;
+
+            for (File file : allFiles) {
+                if (progressMonitor.isCanceled()) {
+                    out.println("Conversion process cancelled by user.");
+                    break;
+                }
+
+                if (file.getName().toLowerCase().endsWith(".webp")) {
+                    progressMonitor.setNote(stepTitle + file.getName());
+
+                    try {
+                        java.awt.image.BufferedImage image = javax.imageio.ImageIO.read(file);
+                        if (image != null) {
+                            String originalPath = file.getAbsolutePath();
+                            String newPath = originalPath.substring(0, originalPath.lastIndexOf(".")) + ".png";
+                            File pngFile = new File(newPath);
+
+                            boolean success = javax.imageio.ImageIO.write(image, "png", pngFile);
+                            if (success) {
+                                file.delete();
+                            }
+                        }
+                    } catch (IOException e) {
+                        out.println("Failed converting file " + file.getName() + ": " + e.getMessage());
+                    }
+                }
+
+                processedCount++;
+                progressMonitor.setProgress(processedCount);
+            }
+
+            progressMonitor.close();
+            out.println("Conversion sequence completed.");
+        } else {
+            out.println("Directory is already in standard image format. Skipping conversion step.");
+        }
+    }
+
+    private static void initializeOnScreenControls() {
+        if (controls != null) {
+            controls.dispose();
+        }
+
         controls = new JFrame();
         controls.setSize(300, 200);
         controls.setLocation(readerWidth, readerHeight);
         controls.setLayout(new GridLayout(2, 3, 10, 10));
+        controls.setBackground(new Color(158, 158, 158));
         controls.setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);
-            // Create 4 buttons
-            JButton b1 = new JButton("<-");
-            JButton b2 = new JButton("->");
-            JButton b3 = new JButton("Home");
-            JButton b4 = new JButton("Exit");
 
-            b1.addActionListener(e -> lastImage());
-            b2.addActionListener(e -> nextImage());
-            b3.addActionListener(e -> restartProgram());
-            b4.addActionListener(e -> exit(0));
+        JButton prevImageButton = new JButton("<-");
+        JButton nextImageButton = new JButton("->");
+        JButton restartButton = new JButton("Home");
+        JButton exitButton = new JButton("Exit");
 
-            // Add them to the frame
-            controls.add(b1);
-            controls.add(b2);
-            controls.add(b3);
-            controls.add(b4);
+        prevImageButton.addActionListener(e -> lastImage());
+        nextImageButton.addActionListener(e -> {
+            try {
+                nextImage();
+            } catch (IOException ex) {
+                throw new RuntimeException(ex);
+            }
+        });
+        restartButton.addActionListener(e -> restartProgram());
+        exitButton.addActionListener(e -> exit(0));
+
+        controls.add(prevImageButton);
+        controls.add(nextImageButton);
+        controls.add(restartButton);
+        controls.add(exitButton);
 
         controls.setVisible(true);
     }
 
     private static void initializeUI() {
+        if (frame != null) {
+            frame.dispose();
+        }
+
         frame = new JFrame();
         String title = locale.getLanguage().equals("de")
                 ? "Leertaste und Strg um zum nächsten oder vorherigen Bild zu wechseln, Esc zum beenden, Rücktaste um zur Ordnerauswahl zu kommen"
@@ -122,29 +312,28 @@ public class reader {
         scrollPane.setOpaque(true);
         frame.add(scrollPane, BorderLayout.CENTER);
 
-// --- DRAG SCROLLING ---
         final Point[] dragStart = {null};
         final int[] startScroll = {0};
 
-        scrollPane.getViewport().addMouseListener(new java.awt.event.MouseAdapter() {
+        scrollPane.getViewport().addMouseListener(new MouseAdapter() {
             @Override
-            public void mousePressed(java.awt.event.MouseEvent e) {
+            public void mousePressed(MouseEvent e) {
                 dragStart[0] = e.getPoint();
                 startScroll[0] = scrollPane.getVerticalScrollBar().getValue();
             }
 
             @Override
-            public void mouseReleased(java.awt.event.MouseEvent e) {
+            public void mouseReleased(MouseEvent e) {
                 dragStart[0] = null;
             }
         });
 
-        scrollPane.getViewport().addMouseMotionListener(new java.awt.event.MouseMotionAdapter() {
+        scrollPane.getViewport().addMouseMotionListener(new MouseMotionAdapter() {
             @Override
-            public void mouseDragged(java.awt.event.MouseEvent e) {
-                int sensitivity = 2;
+            public void mouseDragged(MouseEvent e) {
+                int sensitivity = 4;
                 if (dragStart[0] != null) {
-                    int dy = (dragStart[0].y - e.getY())*sensitivity; // positive = drag up
+                    int dy = (dragStart[0].y - e.getY()) * sensitivity;
                     int newPos = startScroll[0] + dy;
                     JScrollBar bar = scrollPane.getVerticalScrollBar();
                     newPos = Math.max(0, Math.min(newPos, bar.getMaximum()));
@@ -153,71 +342,75 @@ public class reader {
             }
         });
 
-
-
         scrollPane.addMouseWheelListener(m -> {
             JScrollBar verticalScrollBar = scrollPane.getVerticalScrollBar();
             verticalScrollBar.setValue(verticalScrollBar.getValue() + m.getWheelRotation() * 50);
         });
-// --- Mouse SCROLLING ---
 
         frame.addComponentListener(new ComponentAdapter() {
             @Override
             public void componentResized(ComponentEvent e) {
-                updateImage(); // Re-scale the image to fit the new window size
+                updateImage();
             }
         });
 
-// --- KEYBOARD CONTROLS ---
         frame.addKeyListener(new KeyAdapter() {
+            @Override
             public void keyReleased(KeyEvent e) {
-
                 switch (e.getKeyCode()) {
                     case KeyEvent.VK_SPACE:
-                        nextImage();
-                    break;
+                        try {
+                            nextImage();
+                        } catch (IOException ex) {
+                            throw new RuntimeException(ex);
+                        }
+                        break;
                     case KeyEvent.VK_CONTROL:
                         lastImage();
                         break;
                     case KeyEvent.VK_ESCAPE:
                         exit(0);
+                        break;
                     case KeyEvent.VK_BACK_SPACE:
                         restartProgram();
+                        break;
                 }
             }
         });
         frame.setVisible(true);
     }
 
-    private static void lastImage(){
+    private static void lastImage() {
         if (currentImage > 0) {
             currentImage--;
             scrollPane.getVerticalScrollBar().setValue(scrollPane.getVerticalScrollBar().getMaximum());
             updateImage();
+        } else {
+            // Trigger sequence to go backwards into the previous folder directory
+            constructAndOpenPreviousFolder();
         }
     }
 
-    private static void nextImage(){
-        if (currentImage < files.length) {
+    private static void nextImage() throws IOException {
+        if (currentImage < files.length - 1) {
             currentImage++;
             scrollPane.getVerticalScrollBar().setValue(0);
             updateImage();
-        } else if (!deleteDialogShown) {
-            deleteDialogShown = true;
-            deleteFolder(files[0].getParentFile());
+        } else if (!endOfChapter) {
+            endOfChapter = true;
+            constructAndOpenNextFolder();
         }
     }
 
     private static void updateImage() {
-        if (currentImage >= 0 && currentImage < files.length) {
+        if (files != null && currentImage >= 0 && currentImage < files.length) {
             ImageIcon originalIcon = new ImageIcon(files[currentImage].getAbsolutePath());
             Image originalImage = originalIcon.getImage();
 
             int originalWidth = originalIcon.getIconWidth();
             int originalHeight = originalIcon.getIconHeight();
 
-            float maxWidth = frame.getWidth()-20;
-
+            float maxWidth = frame.getWidth() - 20;
             float widthRatio = maxWidth / originalWidth;
 
             int scaledWidth = (int) (maxWidth);
@@ -227,89 +420,174 @@ public class reader {
         }
     }
 
-    private static void deleteFolder(File folder) {
-
-        appendLastFolderToTextFile();
-
-        String message = locale.getLanguage().equals("de")
-                ? "Anwendung wird den Ordner und alle Bilder, die gerade gelesen wurden löschen. Wollen Sie fortfahren"
-                : "Application will delete the folder and all images you just read. Do you want to continue?";
-        String warning = locale.getLanguage().equals("de") ? "Warnung" : "Warning";
-
-        try {
-            TimeUnit.MILLISECONDS.sleep(1000);
-        } catch (InterruptedException e) {
-            throw new RuntimeException(e);
-        }
-
-        JOptionPane optionPane = new JOptionPane(
-                message,
-                JOptionPane.WARNING_MESSAGE,
-                JOptionPane.YES_NO_OPTION
-        );
-
-
-        JDialog dialog = optionPane.createDialog(null, warning);
-        dialog.setModal(false);
-        dialog.setFocusableWindowState(false);
-        dialog.setVisible(true);
-        // Listen for user response
-        optionPane.addPropertyChangeListener(e -> {
-            String prop = e.getPropertyName();
-
-            if ((e.getSource() == optionPane) && prop.equals(JOptionPane.VALUE_PROPERTY)) {
-                dialog.setVisible(false);
-                Object value = optionPane.getValue();
-
-                if (value instanceof Integer && (int) value == JOptionPane.YES_OPTION) {
-                    try {
-                        if (folder.toString().toLowerCase().contains("chapter")) {
-                            Files.walk(folder.toPath())
-                                    .map(Path::toFile)
-                                    .sorted((o1, o2) -> -o1.compareTo(o2)) // delete children first
-                                    .forEach(File::delete);
-                        }
-                    } catch (IOException ex) {
-                        System.out.println("Error deleting folder: " + ex.getMessage());
-                    }
-                }
-                restartProgram();
-            }
-        });
+    private static void deleteFolder(File folder) throws IOException {
+        constructAndOpenNextFolder();
     }
 
-    private static void appendLastFolderToTextFile() {
-        try {
-            File directory = new File(workingFolder.toURI());
-            File file = new File(directory, "list.txt");
+    private static void appendLastFolderToTextFile() throws IOException {
+        Path path = Paths.get(lastFolder);
+        int nameCount = path.getNameCount();
 
-            if (!file.exists()) {
-                directory.mkdirs();
-                Files.createFile(directory.toPath());
-            }
-
-
-
-            try (BufferedWriter writer = new BufferedWriter(new FileWriter(file, true))) {
-                writer.write(lastFolder + File.pathSeparator + "list.txt");
-            }
-
-        } catch (IOException e) {
-            System.out.println("Error writing to text file: " + e.getMessage());
+        if (nameCount >= 2) {
+            readChapters = path.getName(nameCount - 2).toString();
+        } else if (nameCount > 0) {
+            readChapters = path.getName(0).toString();
+        } else {
+            readChapters = "";
         }
+
+        if (nameCount >= 3) {
+            listLocation = path.getParent().getParent().toString();
+        } else if (nameCount == 2) {
+            listLocation = path.getParent().toString();
+        } else {
+            listLocation = lastFolder;
+        }
+
+        Path filePath = Paths.get(listLocation, "list.txt");
+        Files.createDirectories(filePath.getParent());
+
+        if (!Files.exists(filePath)) {
+            Files.createFile(filePath);
+        }
+
+        List<String> lines = Files.readAllLines(filePath);
+        lines.add(readChapters);
+
+        Files.write(
+                filePath,
+                lines,
+                StandardOpenOption.WRITE,
+                StandardOpenOption.TRUNCATE_EXISTING
+        );
+    }
+
+    private static void constructAndOpenNextFolder() {
+        try {
+            appendLastFolderToTextFile();
+
+            Path filePath = Paths.get(listLocation, "list.txt");
+
+            if (Files.exists(filePath)) {
+                List<String> lines = Files.readAllLines(filePath);
+
+                if (!lines.isEmpty()) {
+                    String currentFolderName = lines.get(lines.size() - 1);
+                    String newFolderName = incrementChapterNumber(currentFolderName);
+                    Path nextFolderDirectory = Paths.get(listLocation, newFolderName);
+
+                    Files.createDirectories(nextFolderDirectory);
+                    out.println("Constructed and switching to: " + nextFolderDirectory.toAbsolutePath());
+
+                    SwingUtilities.invokeLater(() -> {
+                        if (frame != null) {
+                            frame.dispose();
+                            frame = null;
+                        }
+                        if (controls != null) {
+                            controls.dispose();
+                            controls = null;
+                        }
+
+                        openFolderDirectly(nextFolderDirectory.toFile(), 0);
+                    });
+                    return;
+                }
+            }
+        } catch (IOException ex) {
+            out.println("Error transitioning to next folder: " + ex.getMessage());
+        }
+
+        restartProgram();
+    }
+
+    private static void constructAndOpenPreviousFolder() {
+        try {
+            // Recompute listLocation references dynamically based on active file tracking states
+            if (lastFolder != null) {
+                Path path = Paths.get(lastFolder);
+                int nameCount = path.getNameCount();
+                if (nameCount >= 3) {
+                    listLocation = path.getParent().getParent().toString();
+                    readChapters = path.getName(nameCount - 2).toString();
+                }
+            }
+
+            if (readChapters != null && listLocation != null) {
+                String previousFolderName = decrementChapterNumber(readChapters);
+                Path prevFolderDirectory = Paths.get(listLocation, previousFolderName);
+
+                // Make sure the target directory actually exists before trying to load it
+                if (Files.exists(prevFolderDirectory)) {
+                    out.println("Constructed and switching back to: " + prevFolderDirectory.toAbsolutePath());
+
+                    SwingUtilities.invokeLater(() -> {
+                        if (frame != null) {
+                            frame.dispose();
+                            frame = null;
+                        }
+                        if (controls != null) {
+                            controls.dispose();
+                            controls = null;
+                        }
+
+                        // Pass Integer.MAX_VALUE to intentionally hit the upper boundary cap inside openFolderDirectly
+                        openFolderDirectly(prevFolderDirectory.toFile(), Integer.MAX_VALUE);
+                    });
+                    return;
+                } else {
+                    out.println("Previous folder does not exist: " + prevFolderDirectory.toAbsolutePath());
+                }
+            }
+        } catch (Exception ex) {
+            out.println("Error transitioning to previous folder: " + ex.getMessage());
+        }
+        // If file system bound limits hit, cleanly loop back to home launcher window state
+        restartProgram();
+    }
+
+    private static String incrementChapterNumber(String folderName) {
+        Pattern pattern = Pattern.compile("\\d+");
+        Matcher matcher = pattern.matcher(folderName);
+
+        if (matcher.find()) {
+            String numberStr = matcher.group();
+            int nextNumber = Integer.parseInt(numberStr) + 1;
+            String formattedNextNumber = String.format("%0" + numberStr.length() + "d", nextNumber);
+            return matcher.replaceFirst(formattedNextNumber);
+        }
+        return folderName;
+    }
+
+    // New helper logic added to look for a digit sequence, subtract 1, and maintain structure
+    private static String decrementChapterNumber(String folderName) {
+        Pattern pattern = Pattern.compile("\\d+");
+        Matcher matcher = pattern.matcher(folderName);
+
+        if (matcher.find()) {
+            String numberStr = matcher.group();
+            int prevNumber = Integer.parseInt(numberStr) - 1;
+
+            // Prevent numbers from dipping into negative values
+            if (prevNumber < 0) prevNumber = 0;
+
+            String formattedPrevNumber = String.format("%0" + numberStr.length() + "d", prevNumber);
+            return matcher.replaceFirst(formattedPrevNumber);
+        }
+        return folderName;
     }
 
     public static void restartProgram() {
-        readerWidth = (int) controls.getBounds().getX();
-        readerHeight= (int) controls.getBounds().getY();
-        try {
-            frame.dispose();
-            controls.dispose();
-        } finally {
-            deleteDialogShown = false;
-            currentImage = 0;
-            programStart();
+        if (controls != null && controls.isShowing()) {
+            readerWidth = (int) controls.getBounds().getX();
+            readerHeight = (int) controls.getBounds().getY();
         }
-    }
 
+        if (frame != null) frame.dispose();
+        if (controls != null) controls.dispose();
+
+        endOfChapter = false;
+        currentImage = 0;
+        programStart();
+    }
 }
