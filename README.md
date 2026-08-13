@@ -7,3 +7,5 @@ Tracking is implemented.
 
 As with all my projects only the source code is provided due to EU Law.
 Feel free to use this code in any manner so long as it is leagal in your country.
+
+As off 13.08.2026 the EU can bite my Shiny metal Ass. XD
