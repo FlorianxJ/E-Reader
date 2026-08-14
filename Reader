@@ -24,10 +24,15 @@ public class reader {
 
     private static JFrame frame;
     private static JFrame controls;
-    private static int readerWidth = (int) Toolkit.getDefaultToolkit().getScreenSize().getWidth() / 2;
-    private static int readerHeight = (int) Toolkit.getDefaultToolkit().getScreenSize().getHeight() - 200;
+    private static final int readerWidth = (int) Toolkit.getDefaultToolkit().getScreenSize().getWidth() / 2;
+    private static final int readerHeight = (int) Toolkit.getDefaultToolkit().getScreenSize().getHeight() - 200;
     private static JLabel imageLabel;
     private static JScrollPane scrollPane;
+    static Point controlsLocation = new Point(readerWidth, readerHeight);
+
+    // Track previous window dimensions & placement across directory switches
+    private static Dimension lastSize = null;
+    private static Point lastLocation = null;
 
     public static void main(String[] args) {
         programStart();
@@ -123,11 +128,6 @@ public class reader {
 
             selectionFrame.setVisible(true);
         });
-    }
-
-    // Overloaded helper method keeping original functionality
-    public static void openFolderDirectly(File folder) {
-        openFolderDirectly(folder, 0);
     }
 
     // Added startingImage parameter to support landing on the last image when navigating backwards
@@ -258,9 +258,13 @@ public class reader {
 
         controls = new JFrame();
         controls.setSize(300, 200);
-        controls.setLocation(readerWidth, readerHeight);
+        if (controlsLocation.getY() != readerHeight && controlsLocation.getX() != readerWidth) {
+            controls.setLocation(controlsLocation);
+        } else {
+            controls.setLocation(readerWidth, readerHeight);
+        }
         controls.setLayout(new GridLayout(2, 3, 10, 10));
-        controls.setBackground(new Color(158, 158, 158));
+        controls.setBackground(new Color(41, 41, 41));
         controls.setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);
 
         JButton prevImageButton = new JButton("<-");
@@ -289,16 +293,28 @@ public class reader {
 
     private static void initializeUI() {
         if (frame != null) {
+            lastSize = frame.getSize();
+            lastLocation = frame.getLocation();
             frame.dispose();
         }
 
         frame = new JFrame();
         String title = locale.getLanguage().equals("de")
-                ? "Leertaste und Strg um zum nächsten oder vorherigen Bild zu wechseln, Esc zum beenden, Rücktaste um zur Ordnerauswahl zu kommen"
-                : "Space and Ctrl to switch images, Esc to close reader backspace to get to folder selection";
+                ? "Leertaste und ALT um zum nächsten oder vorherigen Bild zu wechseln, Esc zum beenden, Rücktaste um zur Ordnerauswahl zu kommen"
+                : "Space and ALT to switch images, Esc to close reader backspace to get to folder selection";
         frame.setTitle(title);
-        frame.setSize((int) Toolkit.getDefaultToolkit().getScreenSize().getWidth() / 2,
-                (int) Toolkit.getDefaultToolkit().getScreenSize().getHeight() - 50);
+
+        if (lastSize == null) {
+            frame.setSize((int) Toolkit.getDefaultToolkit().getScreenSize().getWidth() / 2,
+                    (int) Toolkit.getDefaultToolkit().getScreenSize().getHeight() - 50);
+        } else {
+            frame.setSize(lastSize);
+        }
+
+        if (lastLocation != null) {
+            frame.setLocation(lastLocation);
+        }
+
         frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
         frame.setLayout(new BorderLayout());
 
@@ -365,7 +381,7 @@ public class reader {
                             throw new RuntimeException(ex);
                         }
                         break;
-                    case KeyEvent.VK_CONTROL:
+                    case KeyEvent.VK_ALT:
                         lastImage();
                         break;
                     case KeyEvent.VK_ESCAPE:
@@ -373,6 +389,18 @@ public class reader {
                         break;
                     case KeyEvent.VK_BACK_SPACE:
                         restartProgram();
+                        break;
+                    case KeyEvent.VK_CONTROL:
+                    case KeyEvent.VK_SHIFT:
+                        JScrollBar verticalScrollBar = scrollPane.getVerticalScrollBar();
+                        switch (e.getKeyCode()) {
+                            case KeyEvent.VK_SHIFT:
+                                verticalScrollBar.setValue(verticalScrollBar.getValue() - 600);
+                                break;
+                            case KeyEvent.VK_CONTROL:
+                                verticalScrollBar.setValue(verticalScrollBar.getValue() + 600);
+                                break;
+                        }
                         break;
                 }
             }
@@ -420,10 +448,6 @@ public class reader {
         }
     }
 
-    private static void deleteFolder(File folder) throws IOException {
-        constructAndOpenNextFolder();
-    }
-
     private static void appendLastFolderToTextFile() throws IOException {
         Path path = Paths.get(lastFolder);
         int nameCount = path.getNameCount();
@@ -462,6 +486,25 @@ public class reader {
         );
     }
 
+    // Generic helper method for chapter folder transitions
+    private static void navigateToFolder(Path folderPath, int startingImage) {
+        SwingUtilities.invokeLater(() -> {
+            if (controls != null) {
+                controlsLocation = controls.getLocation();
+                controls.dispose();
+                controls = null;
+            }
+            if (frame != null) {
+                lastSize = frame.getSize();
+                lastLocation = frame.getLocation();
+                frame.dispose();
+                frame = null;
+            }
+
+            openFolderDirectly(folderPath.toFile(), startingImage);
+        });
+    }
+
     private static void constructAndOpenNextFolder() {
         try {
             appendLastFolderToTextFile();
@@ -472,25 +515,14 @@ public class reader {
                 List<String> lines = Files.readAllLines(filePath);
 
                 if (!lines.isEmpty()) {
-                    String currentFolderName = lines.get(lines.size() - 1);
+                    String currentFolderName = lines.getLast();
                     String newFolderName = incrementChapterNumber(currentFolderName);
                     Path nextFolderDirectory = Paths.get(listLocation, newFolderName);
 
                     Files.createDirectories(nextFolderDirectory);
                     out.println("Constructed and switching to: " + nextFolderDirectory.toAbsolutePath());
 
-                    SwingUtilities.invokeLater(() -> {
-                        if (frame != null) {
-                            frame.dispose();
-                            frame = null;
-                        }
-                        if (controls != null) {
-                            controls.dispose();
-                            controls = null;
-                        }
-
-                        openFolderDirectly(nextFolderDirectory.toFile(), 0);
-                    });
+                    navigateToFolder(nextFolderDirectory, 0);
                     return;
                 }
             }
@@ -521,19 +553,8 @@ public class reader {
                 if (Files.exists(prevFolderDirectory)) {
                     out.println("Constructed and switching back to: " + prevFolderDirectory.toAbsolutePath());
 
-                    SwingUtilities.invokeLater(() -> {
-                        if (frame != null) {
-                            frame.dispose();
-                            frame = null;
-                        }
-                        if (controls != null) {
-                            controls.dispose();
-                            controls = null;
-                        }
-
-                        // Pass Integer.MAX_VALUE to intentionally hit the upper boundary cap inside openFolderDirectly
-                        openFolderDirectly(prevFolderDirectory.toFile(), Integer.MAX_VALUE);
-                    });
+                    // Pass Integer.MAX_VALUE to intentionally hit the upper boundary cap inside openFolderDirectly
+                    navigateToFolder(prevFolderDirectory, Integer.MAX_VALUE);
                     return;
                 } else {
                     out.println("Previous folder does not exist: " + prevFolderDirectory.toAbsolutePath());
@@ -559,7 +580,7 @@ public class reader {
         return folderName;
     }
 
-    // New helper logic added to look for a digit sequence, subtract 1, and maintain structure
+    // Helper logic to look for a digit sequence, subtract 1, and maintain structure
     private static String decrementChapterNumber(String folderName) {
         Pattern pattern = Pattern.compile("\\d+");
         Matcher matcher = pattern.matcher(folderName);
@@ -578,13 +599,17 @@ public class reader {
     }
 
     public static void restartProgram() {
-        if (controls != null && controls.isShowing()) {
-            readerWidth = (int) controls.getBounds().getX();
-            readerHeight = (int) controls.getBounds().getY();
+        if (frame != null) {
+            lastSize = frame.getSize();
+            lastLocation = frame.getLocation();
+            frame.dispose();
+            frame = null;
         }
-
-        if (frame != null) frame.dispose();
-        if (controls != null) controls.dispose();
+        if (controls != null) {
+            controlsLocation = controls.getLocation();
+            controls.dispose();
+            controls = null;
+        }
 
         endOfChapter = false;
         currentImage = 0;
